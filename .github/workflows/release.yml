@@ -49,7 +49,9 @@ jobs:
       - name: Install verified NSIS 3.13
         run: |
           $archive = Join-Path $env:RUNNER_TEMP 'nsis.zip'
-          Invoke-WebRequest 'https://downloads.sourceforge.net/project/nsis/NSIS%203/3.13/nsis-3.13.zip' -OutFile $archive
+          # SourceForge returns an HTML download page to PowerShell's user agent.
+          curl.exe --fail --location --silent --show-error --retry 3 --max-time 120 'https://downloads.sourceforge.net/project/nsis/NSIS%203/3.13/nsis-3.13.zip' --output $archive
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS download failed.' }
           $expected = 'BA63DFFC4410EE89193E1CB5A41989991BD77C61068DA17E3156D136B7B0B3D8'
           if ((Get-FileHash $archive).Hash -ne $expected) { throw 'NSIS checksum mismatch.' }
           Expand-Archive -LiteralPath $archive -DestinationPath "$env:RUNNER_TEMP\nsis"
