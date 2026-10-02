@@ -23,4 +23,4 @@ Measured on one machine; Windows and interaction change these values. Reproduce 
 
 Build on Windows with Rust, MSVC + Windows SDK and NSIS: `./scripts/build.ps1 -Installer -Check`. Pushing a matching `vX.Y.Z` tag publishes an installer and SHA-256 checksum through GitHub Actions.
 
-Public domain ([Unlicense](LICENSE)). Inspired by [VTD](https://github.com/matej-kaska/vtd-windows); [third-party notices](THIRD-PARTY-NOTICES.txt).
+Public domain ([Unlicense](LICENSE)). [Third-party notices](THIRD-PARTY-NOTICES.txt).
