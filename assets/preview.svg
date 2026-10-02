@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="220" viewBox="0 0 720 220" role="img" aria-labelledby="title description">
+  <title id="title">RAM Cleanup — tiny app, one action</title>
+  <desc id="description">Illustration of the green RAM Cleanup tray icon and its single Cleanup menu item.</desc>
+  <rect width="720" height="220" rx="20" fill="#101719"/>
+  <circle cx="644" cy="26" r="155" fill="#172b27"/>
+  <g transform="translate(32 32) scale(1.5)" fill="none" stroke="#20c997" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 3v4m7-4v4m7-4v4M9 25v4m7-4v4m7-4v4M3 9h4m-4 7h4m-4 7h4m18-14h4m-4 7h4m-4 7h4"/>
+    <rect x="7" y="7" width="18" height="18" rx="3"/>
+    <path d="m11 16 3.5 3.5L21 13" stroke="#fff" stroke-width="2.5"/>
+  </g>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <text x="99" y="66" fill="#f3f8f6" font-size="30" font-weight="700">RAM Cleanup</text>
+    <text x="34" y="119" fill="#c5d7d0" font-size="21">Tiny app. One action.</text>
+    <text x="34" y="164" fill="#91b9a9" font-size="15">Windows only · Native Rust</text>
+    <rect x="481" y="47" width="205" height="62" rx="9" fill="#283532" stroke="#41534d"/>
+    <rect x="488" y="54" width="191" height="48" rx="6" fill="#334a41"/>
+    <text x="507" y="85" fill="#f3f8f6" font-size="19">Cleanup</text>
+    <rect x="574" y="130" width="112" height="52" rx="10" fill="#202d28" stroke="#41534d"/>
+    <path d="m591 159 5-5 5 5" fill="none" stroke="#c5d7d0" stroke-width="2"/>
+    <g transform="translate(626 140)" fill="none" stroke="#20c997" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 3v4m7-4v4m7-4v4M9 25v4m7-4v4m7-4v4M3 9h4m-4 7h4m-4 7h4m18-14h4m-4 7h4m-4 7h4"/>
+      <rect x="7" y="7" width="18" height="18" rx="3"/>
+      <path d="m11 16 3.5 3.5L21 13" stroke="#fff" stroke-width="2.5"/>
+    </g>
+  </g>
+</svg>

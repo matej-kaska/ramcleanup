@@ -1,0 +1,30 @@
+[package]
+name = "ramcleanup"
+version = "1.0.0"
+edition = "2024"
+license = "Unlicense"
+description = "Tiny Windows tray app for manual memory cleanup"
+autobins = false
+
+[[bin]]
+name = "ramcleanup"
+path = "src/resident.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "ramcleanup-helper"
+path = "src/main.rs"
+
+[profile.dev]
+panic = "abort"
+
+[dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_Memory", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Ime"] }
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

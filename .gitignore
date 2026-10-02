@@ -1,0 +1,23 @@
+# Only project sources belong in Git. Builds, downloads and local measurements
+# stay on the development machine, even if new files appear at the root.
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/LICENSE
+!/THIRD-PARTY-NOTICES.txt
+!/Cargo.toml
+!/Cargo.lock
+!/rust-toolchain.toml
+!/build.rs
+!/.github/
+!/assets/
+!/installer/
+!/scripts/
+!/src/
+
+*.tmp
+*.log
+__pycache__/
+/.github/*
+!/.github/workflows/

@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to release
+        required: true
+        default: v1.0.0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      - name: Verify version and install Rust
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v(\d+\.\d+\.\d+)$') { throw 'Expected a vX.Y.Z tag.' }
+          $version = $matches[1]
+          $manifest = Get-Content Cargo.toml -Raw
+          if ($manifest -notmatch '(?m)^version\s*=\s*"([^"]+)"' -or $matches[1] -ne $version) {
+            throw 'Tag and Cargo.toml version must match.'
+          }
+          rustup show active-toolchain
+          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain installation failed.' }
+
+      - name: Install verified NSIS 3.13
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'nsis.zip'
+          Invoke-WebRequest 'https://downloads.sourceforge.net/project/nsis/NSIS%203/3.13/nsis-3.13.zip' -OutFile $archive
+          $expected = 'BA63DFFC4410EE89193E1CB5A41989991BD77C61068DA17E3156D136B7B0B3D8'
+          if ((Get-FileHash $archive).Hash -ne $expected) { throw 'NSIS checksum mismatch.' }
+          Expand-Archive -LiteralPath $archive -DestinationPath "$env:RUNNER_TEMP\nsis"
+
+      - name: Build installer
+        run: ./scripts/build.ps1 -Check -Installer -NsisRoot "$env:RUNNER_TEMP\nsis\nsis-3.13"
+
+      - name: Publish download
+        run: |
+          $file = 'dist/RAMCleanup-Setup.exe'
+          $hash = (Get-FileHash $file).Hash.ToLowerInvariant()
+          "$hash  RAMCleanup-Setup.exe" | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+          @'
+          Tiny native Rust tray app for Windows 10/11 x64.
+          Right-click the tray icon → Cleanup. No timers, polling or background service.
+
+          Download **RAMCleanup-Setup.exe**, install, and the tray starts automatically.
+          Setup includes an optional **Start RAM Cleanup with Windows** checkbox.
+          Uses the Windows memory operations behind RAMMap's Empty menu; RAMMap is not bundled.
+          '@ | Set-Content dist/release-notes.md -Encoding utf8
+          gh release create $env:RELEASE_TAG $file dist/SHA256SUMS.txt --verify-tag --latest --title "RAM Cleanup $($env:RELEASE_TAG.TrimStart('v'))" --notes-file dist/release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed.' }
