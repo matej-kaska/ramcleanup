@@ -1,8 +1,10 @@
 // All popup/menu caches belong to this short-lived helper, never to the tray.
-use std::ptr::{null, null_mut};
+use core::ptr::{null, null_mut};
 use windows_sys::Win32::{
     Foundation::*,
-    System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentProcessId},
+    System::{
+        LibraryLoader::GetModuleHandleW, SystemInformation::GetSystemDirectoryW, Threading::*,
+    },
     UI::{Input::Ime::ImmDisableIME, WindowsAndMessaging::*},
 };
 
@@ -27,7 +29,7 @@ pub fn menu() -> i32 {
             lpfnWndProc: Some(window_proc),
             hInstance: instance,
             lpszClassName: class,
-            ..std::mem::zeroed()
+            ..core::mem::zeroed()
         };
         if RegisterClassW(&wc) == 0 {
             return 1;
@@ -59,7 +61,7 @@ pub fn menu() -> i32 {
             DestroyWindow(hwnd);
             return 1;
         }
-        let mut point: POINT = std::mem::zeroed();
+        let mut point: POINT = core::mem::zeroed();
         GetCursorPos(&mut point);
         SetForegroundWindow(hwnd);
         let command = TrackPopupMenu(
@@ -82,17 +84,46 @@ pub fn menu() -> i32 {
 }
 
 fn start_cleanup() -> i32 {
-    let Some(windows) = std::env::var_os("SystemRoot") else {
-        return 1;
-    };
-    let tool = std::path::PathBuf::from(windows).join("System32/schtasks.exe");
-    match super::hidden_command(tool)
-        .args(["/Run", "/TN", "\\RAMCleanup.Cleanup"])
-        .status()
-    {
-        Ok(result) if result.success() => 0,
-        _ => {
-            super::error("Cannot start cleanup. Install RAM Cleanup using RAMCleanup-Setup.exe.");
+    unsafe {
+        let mut path = [0u16; 512];
+        let length = GetSystemDirectoryW(path.as_mut_ptr(), path.len() as u32) as usize;
+        let suffix = b"\\schtasks.exe\0";
+        let success = if length != 0 && length + suffix.len() <= path.len() {
+            for (dest, byte) in path[length..].iter_mut().zip(suffix) {
+                *dest = *byte as u16;
+            }
+            let mut arguments = [0u16; 64];
+            for (dest, byte) in arguments
+                .iter_mut()
+                .zip(b"schtasks /Run /TN \"\\RAMCleanup.Cleanup\"\0")
+            {
+                *dest = *byte as u16;
+            }
+            let mut startup: STARTUPINFOW = core::mem::zeroed();
+            startup.cb = core::mem::size_of_val(&startup) as u32;
+            let mut process: PROCESS_INFORMATION = core::mem::zeroed();
+            CreateProcessW(
+                path.as_ptr(),
+                arguments.as_mut_ptr(),
+                null(),
+                null(),
+                0,
+                CREATE_NO_WINDOW,
+                null(),
+                null(),
+                &startup,
+                &mut process,
+            ) != 0
+                && super::wait_child(process) == 0
+        } else {
+            false
+        };
+        if success {
+            0
+        } else {
+            super::error(windows_sys::w!(
+                "Cannot start cleanup. Install RAM Cleanup using RAMCleanup-Setup.exe."
+            ));
             1
         }
     }

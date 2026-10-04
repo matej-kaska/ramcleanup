@@ -27,11 +27,15 @@ fn main() {
         );
         println!("cargo:rustc-link-arg-bin={bin}={}", resource.display());
     }
-    for arg in [
-        "/ENTRY:mainCRTStartup",
-        "/NODEFAULTLIB",
-        "/STACK:131072,4096",
-    ] {
-        println!("cargo:rustc-link-arg-bin=ramcleanup={arg}");
+    for bin in ["ramcleanup", "ramcleanup-helper"] {
+        for arg in [
+            "/ENTRY:mainCRTStartup",
+            "/NODEFAULTLIB",
+            "/STACK:131072,4096",
+            // Read-only unwind metadata shares a section; its directory is preserved.
+            "/MERGE:.pdata=.rdata",
+        ] {
+            println!("cargo:rustc-link-arg-bin={bin}={arg}");
+        }
     }
 }

@@ -29,11 +29,15 @@ class ModuleInfo(c.Structure):
 
 k = c.WinDLL("kernel32", use_last_error=True)
 p = c.WinDLL("psapi", use_last_error=True)
+u = c.WinDLL("user32", use_last_error=True)
 k.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
 k.OpenProcess.restype = w.HANDLE
 k.CloseHandle.argtypes = [w.HANDLE]
 k.GetProcessTimes.argtypes = [w.HANDLE] + [c.POINTER(w.FILETIME)] * 4
 k.GetProcessIoCounters.argtypes = [w.HANDLE, c.POINTER(IoCounters)]
+k.GetProcessHandleCount.argtypes = [w.HANDLE, c.POINTER(w.DWORD)]
+u.GetGuiResources.argtypes = [w.HANDLE, w.DWORD]
+u.GetGuiResources.restype = w.DWORD
 p.GetProcessMemoryInfo.argtypes = [w.HANDLE, c.POINTER(Counters), w.DWORD]
 p.QueryWorkingSet.argtypes = [w.HANDLE, c.c_void_p, w.DWORD]
 p.EnumProcessModulesEx.argtypes = [w.HANDLE, c.POINTER(w.HMODULE), w.DWORD, c.POINTER(w.DWORD), w.DWORD]
@@ -55,12 +59,16 @@ def sample(handle):
     ticks = sum((t.dwHighDateTime << 32) | t.dwLowDateTime for t in times[2:])
     io = IoCounters()
     checked(k.GetProcessIoCounters(handle, c.byref(io)))
+    handles = w.DWORD()
+    checked(k.GetProcessHandleCount(handle, c.byref(handles)))
     return {"time": time.time(), "working_set": counters.WorkingSetSize,
             "private_commit": counters.PrivateUsage,
             "private_working_set": counters.PrivateWorkingSetSize,
             "shared_working_set": counters.WorkingSetSize - counters.PrivateWorkingSetSize,
             "page_faults": counters.PageFaultCount, "cpu_ms": ticks / 10000,
-            "read_bytes": io.ReadTransferCount, "write_bytes": io.WriteTransferCount}
+            "read_bytes": io.ReadTransferCount, "write_bytes": io.WriteTransferCount,
+            "gdi_objects": u.GetGuiResources(handle, 0),
+            "user_objects": u.GetGuiResources(handle, 1), "handle_count": handles.value}
 
 
 def modules(handle):

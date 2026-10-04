@@ -8,7 +8,7 @@ on:
       tag:
         description: Existing version tag to release
         required: true
-        default: v1.0.0
+        default: v1.0.1
 
 permissions:
   contents: read
@@ -67,6 +67,10 @@ jobs:
           @'
           Tiny native Rust tray app for Windows 10/11 x64.
           Right-click the tray icon → Cleanup. No timers, polling or background service.
+
+          This update replaces the on-demand helper with a 13 KiB native executable
+          and reduces the installer to approximately 104 KiB. The tray remains 32 KiB.
+          The tray also releases temporary icon resources and unused heap caches.
 
           Download **RAMCleanup-Setup.exe**, install, and the tray starts automatically.
           Setup includes an optional **Start RAM Cleanup with Windows** checkbox.

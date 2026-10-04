@@ -10,16 +10,17 @@ Install once, approve UAC, and the tray starts immediately. Setup has an optiona
 
 It performs the Windows operations behind [Microsoft RAMMap](https://learn.microsoft.com/en-us/sysinternals/downloads/rammap)'s **Empty** menu: working sets, system file cache, modified pages and standby memory. RAMMap is not required or bundled. Cleaning is manual; Windows can reuse the freed memory and reload trimmed pages.
 
-| Measured footprint | Windows 11 x64, 30 seconds idle |
+| Measured footprint | Windows 11 x64, fresh start, 60 seconds idle |
 |---|---:|
 | Tray executable | 32 KiB |
-| Installer | ~224 KiB |
-| Private resident RAM | 276 KiB |
-| Total resident RAM | 876 KiB |
-| Private commit | 1.08 MiB |
+| On-demand helper | 13 KiB |
+| Installer | ~104 KiB |
+| Private resident RAM | 116 KiB |
+| Total resident RAM | 316 KiB |
+| Private commit | 0.92 MiB |
 | CPU time / reads / writes during sample | 0 ms / 0 B / 0 B |
 
-Measured on one machine; Windows and interaction change these values. Reproduce with `python scripts/measure-memory.py <PID> --seconds 30`.
+Measured on one machine; Windows and interaction change these values. Reproduce with `python scripts/measure-memory.py <PID> --seconds 60`.
 
 Build on Windows with Rust, MSVC + Windows SDK and NSIS: `./scripts/build.ps1 -Installer -Check`. Pushing a matching `vX.Y.Z` tag publishes an installer and SHA-256 checksum through GitHub Actions.
 

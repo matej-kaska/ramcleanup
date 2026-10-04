@@ -14,6 +14,10 @@ use windows_sys::Win32::{
             GetModuleFileNameW, GetModuleHandleW, GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32,
             LoadLibraryExW,
         },
+        Memory::{HeapOptimizeResources, HeapSetInformation},
+        SystemServices::{
+            HEAP_OPTIMIZE_RESOURCES_CURRENT_VERSION, HEAP_OPTIMIZE_RESOURCES_INFORMATION,
+        },
         Threading::*,
     },
     UI::{Input::Ime::ImmDisableIME, Shell::*, WindowsAndMessaging::*},
@@ -21,9 +25,23 @@ use windows_sys::Win32::{
 
 const EVENT: u32 = WM_APP + 1;
 pub const MENU_CLOSED: u32 = WM_APP + 2;
-static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
-static MENU_PROCESS: AtomicUsize = AtomicUsize::new(0);
-static MENU_PID: AtomicU32 = AtomicU32::new(0);
+// Lives on run()'s existing stack for the entire window lifetime. Avoid a
+// separate writable image page for only sixteen bytes of resident state.
+struct WindowState {
+    taskbar_created: u32,
+    menu_process: AtomicUsize,
+    menu_pid: AtomicU32,
+}
+
+struct OwnedIcon(HICON);
+
+impl Drop for OwnedIcon {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { DestroyIcon(self.0) };
+        }
+    }
+}
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
@@ -56,9 +74,9 @@ pub extern "system" fn mainCRTStartup() -> ! {
     unsafe { ExitProcess(run()) }
 }
 
-fn close_menu(kill: bool) {
-    let process = MENU_PROCESS.swap(0, Ordering::Relaxed) as HANDLE;
-    MENU_PID.store(0, Ordering::Relaxed);
+fn close_menu(state: &WindowState, kill: bool) {
+    let process = state.menu_process.swap(0, Ordering::Relaxed) as HANDLE;
+    state.menu_pid.store(0, Ordering::Relaxed);
     if !process.is_null() {
         unsafe {
             if kill {
@@ -72,7 +90,19 @@ fn close_menu(kill: bool) {
 fn release_idle_pages() {
     // One self-trim after startup or user interaction. No timer, repeated sweep,
     // system-wide cleanup, hard working-set limit, or new background thread.
+    let optimization = HEAP_OPTIMIZE_RESOURCES_INFORMATION {
+        Version: HEAP_OPTIMIZE_RESOURCES_CURRENT_VERSION,
+        Flags: 0,
+    };
     unsafe {
+        // Match VTD's idle handoff: decommit unused caches in this process's
+        // heaps before trimming resident pages. Live allocations stay intact.
+        HeapSetInformation(
+            null_mut(),
+            HeapOptimizeResources,
+            (&optimization as *const HEAP_OPTIMIZE_RESOURCES_INFORMATION).cast(),
+            core::mem::size_of_val(&optimization),
+        );
         SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
     }
 }
@@ -94,13 +124,13 @@ fn disable_hidden_window_themes() -> HMODULE {
     }
 }
 
-fn open_menu() {
+fn open_menu(state: &WindowState) {
     unsafe {
-        let previous = MENU_PROCESS.load(Ordering::Relaxed) as HANDLE;
+        let previous = state.menu_process.load(Ordering::Relaxed) as HANDLE;
         if !previous.is_null() && WaitForSingleObject(previous, 0) == WAIT_TIMEOUT {
             return;
         }
-        close_menu(false);
+        close_menu(state, false);
         let mut path = [0u16; 512];
         let length = GetModuleFileNameW(null_mut(), path.as_mut_ptr(), path.len() as u32) as usize;
         if length == 0 || length >= path.len() {
@@ -141,26 +171,46 @@ fn open_menu() {
         ) != 0
         {
             CloseHandle(process.hThread);
-            MENU_PROCESS.store(process.hProcess as usize, Ordering::Relaxed);
-            MENU_PID.store(process.dwProcessId, Ordering::Relaxed);
+            state
+                .menu_process
+                .store(process.hProcess as usize, Ordering::Relaxed);
+            state.menu_pid.store(process.dwProcessId, Ordering::Relaxed);
         }
     }
 }
 
 unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     unsafe {
-        if msg != 0 && msg == TASKBAR_CREATED.load(Ordering::Relaxed) {
+        if msg == WM_NCCREATE {
+            let create = &*(l as *const CREATESTRUCTW);
+            if create.lpCreateParams.is_null() {
+                return 0;
+            }
+            SetLastError(0);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, create.lpCreateParams as isize);
+            if GetLastError() != 0 {
+                return 0;
+            }
+        }
+        let pointer = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const WindowState;
+        if pointer.is_null() {
+            return DefWindowProcW(hwnd, msg, w, l);
+        }
+        // Only this thread owns the window. Atomics allow synchronous window
+        // message reentrancy without mutable references crossing Win32 calls.
+        let state = &*pointer;
+        if msg != 0 && msg == state.taskbar_created {
             update(hwnd, NIM_ADD);
             release_idle_pages();
             return 0;
         }
         match msg {
             EVENT if l as u32 == WM_RBUTTONUP => {
-                open_menu();
+                open_menu(state);
                 0
             }
-            MENU_CLOSED if w as u32 == MENU_PID.load(Ordering::Relaxed) => {
-                close_menu(false);
+            MENU_CLOSED if w as u32 == state.menu_pid.load(Ordering::Relaxed) => {
+                close_menu(state, false);
                 release_idle_pages();
                 0
             }
@@ -170,9 +220,13 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
             }
             WM_DESTROY => {
                 update(hwnd, NIM_DELETE);
-                close_menu(true);
+                close_menu(state, true);
                 PostQuitMessage(0);
                 0
+            }
+            WM_NCDESTROY => {
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                DefWindowProcW(hwnd, msg, w, l)
             }
             _ => DefWindowProcW(hwnd, msg, w, l),
         }
@@ -181,6 +235,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
 
 fn update(hwnd: HWND, operation: u32) -> bool {
     unsafe {
+        let mut owned_icon = OwnedIcon(null_mut());
         let mut icon: NOTIFYICONDATAW = core::mem::zeroed();
         icon.cbSize = core::mem::size_of_val(&icon) as u32;
         icon.hWnd = hwnd;
@@ -188,14 +243,15 @@ fn update(hwnd: HWND, operation: u32) -> bool {
         if operation == NIM_ADD {
             icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
             icon.uCallbackMessage = EVENT;
-            icon.hIcon = LoadImageW(
+            owned_icon.0 = LoadImageW(
                 GetModuleHandleW(null()),
                 core::ptr::without_provenance(1),
                 IMAGE_ICON,
                 GetSystemMetrics(SM_CXSMICON),
                 GetSystemMetrics(SM_CYSMICON),
-                LR_SHARED,
+                0,
             ) as HICON;
+            icon.hIcon = owned_icon.0;
             if icon.hIcon.is_null() {
                 return false;
             }
@@ -205,8 +261,9 @@ fn update(hwnd: HWND, operation: u32) -> bool {
                 12,
             );
         }
-        // Explorer owns the registered icon. Keep no shell DLL reference in the
-        // sleeping tray: unload its libraries and caches after this synchronous call.
+        // Explorer copies the icon during this synchronous call. The temporary
+        // owned icon releases its USER/GDI resources on every return path.
+        // Keep no shell DLL reference in the sleeping tray either.
         let shell = LoadLibraryExW(
             windows_sys::w!("shell32.dll"),
             null_mut(),
@@ -249,10 +306,11 @@ fn run() -> u32 {
         );
         ImmDisableIME(0);
         let theme = disable_hidden_window_themes();
-        TASKBAR_CREATED.store(
-            RegisterWindowMessageW(windows_sys::w!("TaskbarCreated")),
-            Ordering::Relaxed,
-        );
+        let state = WindowState {
+            taskbar_created: RegisterWindowMessageW(windows_sys::w!("TaskbarCreated")),
+            menu_process: AtomicUsize::new(0),
+            menu_pid: AtomicU32::new(0),
+        };
         let instance = GetModuleHandleW(null());
         let class = windows_sys::w!("RAMCleanup.Tray");
         let wc = WNDCLASSW {
@@ -280,7 +338,7 @@ fn run() -> u32 {
             null_mut(),
             null_mut(),
             instance,
-            null(),
+            (&state as *const WindowState).cast(),
         );
         if !theme.is_null() {
             FreeLibrary(theme);
@@ -301,6 +359,9 @@ fn run() -> u32 {
             }
             DispatchMessageW(&msg);
         };
+        // Even a WM_QUIT/error must destroy the window before its stack-owned
+        // state goes away. If WM_CLOSE already destroyed it, this is harmless.
+        DestroyWindow(hwnd);
         CloseHandle(mutex);
         result
     }

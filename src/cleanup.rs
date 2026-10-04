@@ -1,4 +1,4 @@
-use std::{
+use core::{
     ffi::c_void,
     fmt::Write,
     ptr::{null, null_mut},
@@ -6,11 +6,88 @@ use std::{
 use windows_sys::Win32::{
     Foundation::*,
     Security::*,
+    Storage::FileSystem::*,
     System::{
+        LibraryLoader::GetModuleFileNameW,
         Memory::SetSystemFileCacheSize,
+        SystemInformation::GetTickCount64,
         Threading::{GetCurrentProcess, OpenProcessToken},
     },
 };
+
+// Maximum diagnostic length is below 2 KiB even for 64-bit counters. Keep it
+// on the worker's stack instead of pulling in String, fs and the std runtime.
+struct Log {
+    bytes: [u8; 2048],
+    length: usize,
+}
+
+impl Write for Log {
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        let Some(end) = self.length.checked_add(text.len()) else {
+            return Err(core::fmt::Error);
+        };
+        if end > self.bytes.len() {
+            return Err(core::fmt::Error);
+        }
+        self.bytes[self.length..end].copy_from_slice(text.as_bytes());
+        self.length = end;
+        Ok(())
+    }
+}
+
+#[inline(never)]
+fn save_log(log: &Log) {
+    unsafe {
+        let mut path = [0u16; 512];
+        let length = GetModuleFileNameW(null_mut(), path.as_mut_ptr(), path.len() as u32) as usize;
+        if length == 0 || length >= path.len() {
+            return;
+        }
+        let Some(index) = path[..length]
+            .iter()
+            .rposition(|unit| *unit == b'\\' as u16)
+        else {
+            return;
+        };
+        let name = b"cleanup-last.txt\0";
+        if index + 1 + name.len() > path.len() {
+            return;
+        }
+        for (dest, byte) in path[index + 1..].iter_mut().zip(name) {
+            *dest = *byte as u16;
+        }
+        let file = CreateFileW(
+            path.as_ptr(),
+            GENERIC_WRITE,
+            FILE_SHARE_READ,
+            null(),
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            null_mut(),
+        );
+        if file == INVALID_HANDLE_VALUE {
+            return;
+        }
+        let mut offset = 0;
+        while offset < log.length {
+            let mut written = 0;
+            if WriteFile(
+                file,
+                log.bytes.as_ptr().add(offset),
+                (log.length - offset) as u32,
+                &mut written,
+                null_mut(),
+            ) == 0
+                || written == 0
+            {
+                break;
+            }
+            offset += written as usize;
+        }
+        CloseHandle(file);
+    }
+}
 
 // Native Windows ABI, independently implemented from the phnt definition.
 // SystemMemoryListInformation = 80, commands 2, 3, 4.
@@ -36,7 +113,7 @@ fn enable(name: *const u16) -> bool {
         {
             return false;
         }
-        let mut privileges: TOKEN_PRIVILEGES = std::mem::zeroed();
+        let mut privileges: TOKEN_PRIVILEGES = core::mem::zeroed();
         privileges.PrivilegeCount = 1;
         privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
         let found = LookupPrivilegeValueW(null(), name, &mut privileges.Privileges[0].Luid) != 0;
@@ -53,13 +130,13 @@ fn memory_command(command: u32) -> i32 {
     unsafe { NtSetSystemInformation(80, (&command as *const u32).cast(), 4) }
 }
 
-fn snapshot(log: &mut String, label: &str) {
+fn snapshot(log: &mut Log, label: &str) {
     let mut pages = [0usize; 22];
     let status = unsafe {
         NtQuerySystemInformation(
             80,
             pages.as_mut_ptr().cast(),
-            std::mem::size_of_val(&pages) as u32,
+            core::mem::size_of_val(&pages) as u32,
             null_mut(),
         )
     };
@@ -87,11 +164,16 @@ pub fn run(check: bool) -> i32 {
     if check {
         return failures;
     }
-    let mut log = format!(
-        "RAM Cleanup {}\nProfile privilege: {profile}; quota privilege: {quota}\n",
+    let mut log = Log {
+        bytes: [0; 2048],
+        length: 0,
+    };
+    let _ = writeln!(
+        log,
+        "RAM Cleanup {}\nProfile privilege: {profile}; quota privilege: {quota}",
         env!("CARGO_PKG_VERSION")
     );
-    let started = std::time::Instant::now();
+    let started = unsafe { GetTickCount64() };
     snapshot(&mut log, "Before");
     let status = if profile {
         memory_command(2)
@@ -136,12 +218,8 @@ pub fn run(check: bool) -> i32 {
     let _ = writeln!(
         log,
         "Failure mask: {failures}; elapsed: {} ms",
-        started.elapsed().as_millis()
+        unsafe { GetTickCount64() } - started
     );
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let _ = std::fs::write(dir.join("cleanup-last.txt"), log);
-    }
+    save_log(&log);
     failures
 }
